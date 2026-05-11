@@ -1,0 +1,10 @@
+{
+  "irodori_root": "../Irodori-TTS",
+  "output_dir": "outputs/generated_audio",
+  "delete_delay_seconds": 60,
+  "chunk_silence_seconds": 0.45,
+  "num_workers": 1,
+  "audio_output_max_bytes": 2147483648,
+  "default_model": "irodori-tts",
+  "default_voice": ""
+}

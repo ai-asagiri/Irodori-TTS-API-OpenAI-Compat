@@ -1,0 +1,16 @@
+/outputs
+refs/
+*.wav
+*.mp3
+*.flac
+*.safetensors
+*.gguf
+*.ckpt
+*.pth
+*.pt
+.env
+.venv/
+.vscode/
+__pycache__/
+*.pyc
+config.json
