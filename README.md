@@ -10,7 +10,7 @@ Irodori-TTS を OpenAI 互換形式の Text-to-Speech API として利用する�
 
 ## 本家 Irodori-TTS との関係
 
-このリポジトリは Irodori-TTS 本体ではなく、API ラッパーのみを管理します。
+このリポジトリは [Aratako/Irodori-TTS](https://github.com/Aratako/Irodori-TTS) 本体ではなく、API ラッパーのみを管理します。
 
 Irodori-TTS 本体は別ディレクトリに配置し、この API から import / runtime 経由で利用します。本家 Irodori-TTS のコードやモデル重みは、このリポジトリに同梱していません。
 
@@ -105,7 +105,7 @@ Windows / Git Bash:
 ```sh
 IRODORI_ROOT="$(cd ../Irodori-TTS && pwd)"
 IRODORI_PYTHON="$IRODORI_ROOT/.venv/Scripts/python.exe"
-"$IRODORI_PYTHON" -c 'import fastapi, uvicorn, pydantic, psutil; import dotenv; print("api deps ok")'
+"$IRODORI_PYTHON" -c 'import fastapi, uvicorn, pydantic; import dotenv; print("api deps ok")'
 ```
 
 Linux / macOS:
@@ -113,7 +113,7 @@ Linux / macOS:
 ```sh
 IRODORI_ROOT="$(cd ../Irodori-TTS && pwd)"
 IRODORI_PYTHON="$IRODORI_ROOT/.venv/bin/python"
-"$IRODORI_PYTHON" -c 'import fastapi, uvicorn, pydantic, psutil; import dotenv; print("api deps ok")'
+"$IRODORI_PYTHON" -c 'import fastapi, uvicorn, pydantic; import dotenv; print("api deps ok")'
 ```
 
 不足している場合のみ追加:
