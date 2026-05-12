@@ -40,6 +40,12 @@ MAX_CHUNK_CHARS = 60
 MERGE_SHORT_SENTENCE_MAX_CHARS = 45
 MIN_CHUNK_CHARS = 20
 SILENCE_BETWEEN_CHUNKS_SECONDS = CONFIG.chunk_silence_seconds
+CLOSING_BRACKET_CHARS = "」』）)”】〕〉》］｝"
+BRACKET_CHARS = "「『（(［[｛{【〔〈《」』）)］]｝}】〕〉》“”\"'"
+READING_REPLACEMENTS = {
+    "一文": "いちぶん",
+    "問題": "もんだい",
+}
 
 # Generated wav files are kept here and pruned by total size.
 AUDIO_OUTPUT_DIR = CONFIG.output_dir
@@ -123,6 +129,7 @@ class SpeechRequest(BaseModel):
 
 
 app = FastAPI(title="Irodori-TTS OpenAI Compatible API")
+
 
 def load_voice_refs() -> dict[str, Path]:
     REF_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,14 +250,17 @@ def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]
     if not text:
         return []
 
-    parts = re.split(r"(\r?\n+|[。！？!?]+)", text)
+    parts = re.split(
+        rf"(\r?\n+|[。！？!?]+[{re.escape(CLOSING_BRACKET_CHARS)}]*)",
+        text,
+    )
     chunks: list[str] = []
     current = ""
 
     for index in range(0, len(parts), 2):
         body = parts[index]
         delimiter = parts[index + 1] if index + 1 < len(parts) else ""
-        sentence = (body + delimiter).strip()
+        sentence = apply_reading_replacements((body + delimiter).strip())
         if not sentence:
             continue
         if len(sentence) > max_chars:
@@ -275,8 +285,59 @@ def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]
     return [chunk for chunk in chunks if chunk.strip()]
 
 
+def apply_reading_replacements(text: str) -> str:
+    for source, replacement in READING_REPLACEMENTS.items():
+        text = text.replace(source, replacement)
+    return text
+
+
+ELLIPSIS_RE = re.compile(r"(?:…+|\.{3,}|・・・+|･･･+)")
+
+
+def count_ellipsis(text: str) -> int:
+    return len(ELLIPSIS_RE.findall(text))
+
+
+def estimate_speech_units(text: str) -> float:
+    body = ELLIPSIS_RE.sub("", text)
+    body = body.translate(str.maketrans("", "", BRACKET_CHARS))
+
+    units = 0.0
+    for ch in body:
+        if re.match(r"[、，,。！？!?\s]", ch):
+            continue
+        if ch in "ゃゅょャュョぁぃぅぇぉァィゥェォ":
+            continue
+        if ch in "っッー":
+            units += 1.0
+        elif re.match(r"[\u3400-\u9fff々〆ヵヶ]", ch):
+            units += 1.4
+        elif re.match(r"[\u3041-\u3096\u30A1-\u30FA]", ch):
+            units += 1.0
+        elif ch.isascii() and ch.isalnum():
+            units += 0.7
+        else:
+            units += 1.0
+
+    return units
+
+
 def seconds_for_chunk(text: str) -> float:
-    return max(8.0, min(30.0, len(text) * 0.16 + 3.5))
+    text = apply_reading_replacements(text)
+    units = estimate_speech_units(text)
+    comma_count = len(re.findall(r"[、，,]", text))
+    sentence_end_count = len(re.findall(r"[。！？!?]", text))
+    ellipsis_count = count_ellipsis(text)
+
+    seconds = (
+        units * 0.12
+        + comma_count * 0.60
+        + sentence_end_count * 0.25
+        + ellipsis_count * 0.80
+        + 1.00
+    )
+
+    return max(4.6, min(30.0, seconds))
 
 
 def audio_to_numpy_float32(audio) -> np.ndarray:
