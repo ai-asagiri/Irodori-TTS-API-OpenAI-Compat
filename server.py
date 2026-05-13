@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import sys
@@ -33,6 +34,7 @@ from tts_runtime_pool import TTSWorkerPool
 
 BASE_DIR = Path(__file__).resolve().parent
 REF_DIR = BASE_DIR / "refs"
+READING_REPLACEMENTS_PATH = CONFIG.reading_replacements_path
 
 CODEC_REPO = "Aratako/Semantic-DACVAE-Japanese-32dim"
 DEFAULT_MODEL = CONFIG.default_model
@@ -43,10 +45,7 @@ MIN_CHUNK_CHARS = 20
 SILENCE_BETWEEN_CHUNKS_SECONDS = CONFIG.chunk_silence_seconds
 CLOSING_BRACKET_CHARS = "」』）)”】〕〉》］｝"
 BRACKET_CHARS = "「『（(［[｛{【〔〈《」』）)］]｝}】〕〉》“”\"'"
-READING_REPLACEMENTS = {
-    "一文": "いちぶん",
-    "問題": "もんだい",
-}
+READING_CORRECTIONS_WARNING_HEADER = "X-Irodori-Reading-Corrections-Warning"
 
 # Generated wav files are kept here and pruned by total size.
 AUDIO_OUTPUT_DIR = CONFIG.output_dir
@@ -77,6 +76,10 @@ MODEL_SPECS: dict[str, ModelSpec] = {
 }
 _runtime_key_cache: dict[str, RuntimeKey] = {}
 _runtime_key_cache_lock = Lock()
+_reading_replacements_cache: dict[str, str] = {}
+_reading_replacements_loaded = False
+_reading_replacements_error: str | None = None
+_reading_replacements_lock = Lock()
 
 
 class CommonParams(BaseModel):
@@ -90,6 +93,7 @@ class CommonParams(BaseModel):
     tail_window_size: int = 20
     tail_std_threshold: float = 0.05
     tail_mean_threshold: float = 0.1
+    use_reading_corrections: bool = True
 
 
 class DefaultModelParams(BaseModel):
@@ -246,7 +250,64 @@ def force_split_long_text(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
-def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
+def _format_reading_replacements_error(error: Exception) -> str:
+    return f"fallback_to_last_valid; path={READING_REPLACEMENTS_PATH}; error={type(error).__name__}: {error}"
+
+
+def get_reading_replacements_error() -> str | None:
+    with _reading_replacements_lock:
+        return _reading_replacements_error
+
+
+def load_reading_replacements() -> dict[str, str]:
+    global _reading_replacements_cache, _reading_replacements_loaded, _reading_replacements_error
+
+    with _reading_replacements_lock:
+        if not READING_REPLACEMENTS_PATH.exists():
+            _reading_replacements_error = None
+            if _reading_replacements_loaded:
+                return dict(_reading_replacements_cache)
+            return {}
+
+        try:
+            with READING_REPLACEMENTS_PATH.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+
+            if not isinstance(loaded, dict):
+                raise ValueError("reading replacements must be a JSON object")
+
+            replacements: dict[str, str] = {}
+            for source, replacement in loaded.items():
+                source_text = str(source)
+                if source_text:
+                    replacements[source_text] = str(replacement)
+
+            _reading_replacements_cache = replacements
+            _reading_replacements_loaded = True
+            _reading_replacements_error = None
+            return dict(replacements)
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            if not _reading_replacements_loaded:
+                _reading_replacements_error = None
+                raise RuntimeError(
+                    f"reading corrections could not be loaded: {READING_REPLACEMENTS_PATH}: "
+                    f"{type(e).__name__}: {e}"
+                ) from e
+
+            _reading_replacements_error = _format_reading_replacements_error(e)
+            print(
+                f"[tts] reading_replacements fallback warning={_reading_replacements_error}",
+                flush=True,
+            )
+            return dict(_reading_replacements_cache)
+
+
+def split_text_for_tts(
+    text: str,
+    max_chars: int = MAX_CHUNK_CHARS,
+    *,
+    reading_replacements: dict[str, str] | None = None,
+) -> list[str]:
     text = text.strip()
     if not text:
         return []
@@ -261,7 +322,10 @@ def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]
     for index in range(0, len(parts), 2):
         body = parts[index]
         delimiter = parts[index + 1] if index + 1 < len(parts) else ""
-        sentence = apply_reading_replacements((body + delimiter).strip())
+        sentence = apply_reading_replacements(
+            (body + delimiter).strip(),
+            reading_replacements=reading_replacements,
+        )
         if not sentence:
             continue
         if len(sentence) > max_chars:
@@ -286,8 +350,14 @@ def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]
     return [chunk for chunk in chunks if chunk.strip()]
 
 
-def apply_reading_replacements(text: str) -> str:
-    for source, replacement in READING_REPLACEMENTS.items():
+def apply_reading_replacements(
+    text: str,
+    *,
+    reading_replacements: dict[str, str] | None = None,
+) -> str:
+    if reading_replacements is None:
+        return text
+    for source, replacement in reading_replacements.items():
         text = text.replace(source, replacement)
     return text
 
@@ -323,8 +393,15 @@ def estimate_speech_units(text: str) -> float:
     return units
 
 
-def seconds_for_chunk(text: str) -> float:
-    text = apply_reading_replacements(text)
+def seconds_for_chunk(
+    text: str,
+    *,
+    reading_replacements: dict[str, str] | None = None,
+) -> float:
+    text = apply_reading_replacements(
+        text,
+        reading_replacements=reading_replacements,
+    )
     units = estimate_speech_units(text)
     comma_count = len(re.findall(r"[、，,]", text))
     sentence_end_count = len(re.findall(r"[。！？!?]", text))
@@ -580,7 +657,14 @@ async def create_speech(req: SpeechRequest):
         use_speaker_condition=use_speaker_condition,
     )
 
-    chunks = split_text_for_tts(text)
+    reading_replacements = None
+    if common.use_reading_corrections:
+        reading_replacements = load_reading_replacements()
+
+    chunks = split_text_for_tts(
+        text,
+        reading_replacements=reading_replacements,
+    )
     if not chunks:
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
 
@@ -609,6 +693,7 @@ async def create_speech(req: SpeechRequest):
         f"no_ref={no_ref} "
         f"use_speaker_condition={use_speaker_condition} "
         f"use_caption_condition={use_caption_condition} "
+        f"use_reading_corrections={common.use_reading_corrections} "
         f"caption={caption!r}"
     )
     print(
@@ -638,7 +723,10 @@ async def create_speech(req: SpeechRequest):
         sample_rate: int | None = None
 
         for index, chunk in enumerate(chunks, start=1):
-            chunk_seconds = seconds_for_chunk(chunk)
+            chunk_seconds = seconds_for_chunk(
+                chunk,
+                reading_replacements=reading_replacements,
+            )
             chunk_start = time.perf_counter()
             print(
                 f"[tts:{log_kind}] chunk "
@@ -780,9 +868,16 @@ async def create_speech(req: SpeechRequest):
         delete_file(out_path)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    headers: dict[str, str] = {}
+    if common.use_reading_corrections:
+        reading_replacements_error = get_reading_replacements_error()
+        if reading_replacements_error:
+            headers[READING_CORRECTIONS_WARNING_HEADER] = reading_replacements_error
+
     return FileResponse(
         path=str(out_path),
         media_type="audio/wav",
         filename="speech.wav",
+        headers=headers,
         background=BackgroundTask(delete_file_later, out_path),
     )
