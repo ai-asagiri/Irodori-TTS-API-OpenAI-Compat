@@ -20,6 +20,7 @@ class AppConfig:
     audio_output_max_bytes: int
     default_model: str
     default_voice: str
+    reading_replacements_path: Path
 
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -31,6 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "audio_output_max_bytes": 2147483648,
     "default_model": "irodori-tts",
     "default_voice": "",
+    "reading_replacements_path": "reading_replacements.json",
 }
 
 
@@ -84,6 +86,10 @@ def load_config() -> AppConfig:
         audio_output_max_bytes=audio_output_max_bytes,
         default_model=str(raw["default_model"]).strip() or DEFAULT_CONFIG["default_model"],
         default_voice=str(raw["default_voice"]).strip(),
+        reading_replacements_path=_resolve_path(
+            str(raw["reading_replacements_path"]),
+            base_dir=API_ROOT,
+        ),
     )
 
 
