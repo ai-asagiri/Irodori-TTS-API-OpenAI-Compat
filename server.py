@@ -263,9 +263,9 @@ def load_reading_replacements() -> dict[str, str]:
 
     with _reading_replacements_lock:
         if not READING_REPLACEMENTS_PATH.exists():
-            _reading_replacements_cache = {}
-            _reading_replacements_loaded = False
             _reading_replacements_error = None
+            if _reading_replacements_loaded:
+                return dict(_reading_replacements_cache)
             return {}
 
         try:
@@ -305,7 +305,7 @@ def split_text_for_tts(
     text: str,
     max_chars: int = MAX_CHUNK_CHARS,
     *,
-    use_reading_corrections: bool = True,
+    reading_replacements: dict[str, str] | None = None,
 ) -> list[str]:
     text = text.strip()
     if not text:
@@ -323,7 +323,7 @@ def split_text_for_tts(
         delimiter = parts[index + 1] if index + 1 < len(parts) else ""
         sentence = apply_reading_replacements(
             (body + delimiter).strip(),
-            use_reading_corrections=use_reading_corrections,
+            reading_replacements=reading_replacements,
         )
         if not sentence:
             continue
@@ -352,11 +352,11 @@ def split_text_for_tts(
 def apply_reading_replacements(
     text: str,
     *,
-    use_reading_corrections: bool = True,
+    reading_replacements: dict[str, str] | None = None,
 ) -> str:
-    if not use_reading_corrections:
+    if reading_replacements is None:
         return text
-    for source, replacement in load_reading_replacements().items():
+    for source, replacement in reading_replacements.items():
         text = text.replace(source, replacement)
     return text
 
@@ -395,11 +395,11 @@ def estimate_speech_units(text: str) -> float:
 def seconds_for_chunk(
     text: str,
     *,
-    use_reading_corrections: bool = True,
+    reading_replacements: dict[str, str] | None = None,
 ) -> float:
     text = apply_reading_replacements(
         text,
-        use_reading_corrections=use_reading_corrections,
+        reading_replacements=reading_replacements,
     )
     units = estimate_speech_units(text)
     comma_count = len(re.findall(r"[、，,]", text))
@@ -656,9 +656,13 @@ async def create_speech(req: SpeechRequest):
         use_speaker_condition=use_speaker_condition,
     )
 
+    reading_replacements = None
+    if common.use_reading_corrections:
+        reading_replacements = load_reading_replacements()
+
     chunks = split_text_for_tts(
         text,
-        use_reading_corrections=common.use_reading_corrections,
+        reading_replacements=reading_replacements,
     )
     if not chunks:
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
@@ -718,7 +722,7 @@ async def create_speech(req: SpeechRequest):
         for index, chunk in enumerate(chunks, start=1):
             chunk_seconds = seconds_for_chunk(
                 chunk,
-                use_reading_corrections=common.use_reading_corrections,
+                reading_replacements=reading_replacements,
             )
             chunk_start = time.perf_counter()
             print(
