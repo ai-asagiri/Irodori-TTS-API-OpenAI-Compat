@@ -44,6 +44,7 @@ MIN_CHUNK_CHARS = 20
 SILENCE_BETWEEN_CHUNKS_SECONDS = CONFIG.chunk_silence_seconds
 CLOSING_BRACKET_CHARS = "」』）)”】〕〉》］｝"
 BRACKET_CHARS = "「『（(［[｛{【〔〈《」』）)］]｝}】〕〉》“”\"'"
+READING_REPLACEMENTS_WARNING_HEADER = "X-Irodori-Reading-Replacements-Warning"
 
 # Generated wav files are kept here and pruned by total size.
 AUDIO_OUTPUT_DIR = CONFIG.output_dir
@@ -74,6 +75,9 @@ MODEL_SPECS: dict[str, ModelSpec] = {
 }
 _runtime_key_cache: dict[str, RuntimeKey] = {}
 _runtime_key_cache_lock = Lock()
+_reading_replacements_cache: dict[str, str] = {}
+_reading_replacements_error: str | None = None
+_reading_replacements_lock = Lock()
 
 
 class CommonParams(BaseModel):
@@ -243,24 +247,47 @@ def force_split_long_text(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def _format_reading_replacements_error(error: Exception) -> str:
+    return f"fallback_to_last_valid; path={READING_REPLACEMENTS_PATH}; error={type(error).__name__}: {error}"
+
+
+def get_reading_replacements_error() -> str | None:
+    with _reading_replacements_lock:
+        return _reading_replacements_error
+
+
 def load_reading_replacements() -> dict[str, str]:
-    if not READING_REPLACEMENTS_PATH.exists():
-        return {}
+    global _reading_replacements_cache, _reading_replacements_error
 
-    with READING_REPLACEMENTS_PATH.open("r", encoding="utf-8") as f:
-        loaded = json.load(f)
+    with _reading_replacements_lock:
+        if not READING_REPLACEMENTS_PATH.exists():
+            _reading_replacements_cache = {}
+            _reading_replacements_error = None
+            return {}
 
-    if not isinstance(loaded, dict):
-        raise ValueError(
-            f"reading replacements must be a JSON object: {READING_REPLACEMENTS_PATH}"
-        )
+        try:
+            with READING_REPLACEMENTS_PATH.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
 
-    replacements: dict[str, str] = {}
-    for source, replacement in loaded.items():
-        source_text = str(source)
-        if source_text:
-            replacements[source_text] = str(replacement)
-    return replacements
+            if not isinstance(loaded, dict):
+                raise ValueError("reading replacements must be a JSON object")
+
+            replacements: dict[str, str] = {}
+            for source, replacement in loaded.items():
+                source_text = str(source)
+                if source_text:
+                    replacements[source_text] = str(replacement)
+
+            _reading_replacements_cache = replacements
+            _reading_replacements_error = None
+            return dict(replacements)
+        except (OSError, json.JSONDecodeError, ValueError) as e:
+            _reading_replacements_error = _format_reading_replacements_error(e)
+            print(
+                f"[tts] reading_replacements fallback warning={_reading_replacements_error}",
+                flush=True,
+            )
+            return dict(_reading_replacements_cache)
 
 
 def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
@@ -788,9 +815,15 @@ async def create_speech(req: SpeechRequest):
         delete_file(out_path)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    headers: dict[str, str] = {}
+    reading_replacements_error = get_reading_replacements_error()
+    if reading_replacements_error:
+        headers[READING_REPLACEMENTS_WARNING_HEADER] = reading_replacements_error
+
     return FileResponse(
         path=str(out_path),
         media_type="audio/wav",
         filename="speech.wav",
+        headers=headers,
         background=BackgroundTask(delete_file_later, out_path),
     )
