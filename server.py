@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sys
 import time
@@ -32,6 +33,7 @@ from tts_runtime_pool import TTSWorkerPool
 
 BASE_DIR = Path(__file__).resolve().parent
 REF_DIR = BASE_DIR / "refs"
+READING_REPLACEMENTS_PATH = BASE_DIR / "reading_replacements.json"
 
 CODEC_REPO = "Aratako/Semantic-DACVAE-Japanese-32dim"
 DEFAULT_MODEL = CONFIG.default_model
@@ -42,10 +44,6 @@ MIN_CHUNK_CHARS = 20
 SILENCE_BETWEEN_CHUNKS_SECONDS = CONFIG.chunk_silence_seconds
 CLOSING_BRACKET_CHARS = "」』）)”】〕〉》］｝"
 BRACKET_CHARS = "「『（(［[｛{【〔〈《」』）)］]｝}】〕〉》“”\"'"
-READING_REPLACEMENTS = {
-    "一文": "いちぶん",
-    "問題": "もんだい",
-}
 
 # Generated wav files are kept here and pruned by total size.
 AUDIO_OUTPUT_DIR = CONFIG.output_dir
@@ -245,6 +243,26 @@ def force_split_long_text(text: str, max_chars: int) -> list[str]:
     return chunks
 
 
+def load_reading_replacements() -> dict[str, str]:
+    if not READING_REPLACEMENTS_PATH.exists():
+        return {}
+
+    with READING_REPLACEMENTS_PATH.open("r", encoding="utf-8") as f:
+        loaded = json.load(f)
+
+    if not isinstance(loaded, dict):
+        raise ValueError(
+            f"reading replacements must be a JSON object: {READING_REPLACEMENTS_PATH}"
+        )
+
+    replacements: dict[str, str] = {}
+    for source, replacement in loaded.items():
+        source_text = str(source)
+        if source_text:
+            replacements[source_text] = str(replacement)
+    return replacements
+
+
 def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
     text = text.strip()
     if not text:
@@ -286,7 +304,7 @@ def split_text_for_tts(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]
 
 
 def apply_reading_replacements(text: str) -> str:
-    for source, replacement in READING_REPLACEMENTS.items():
+    for source, replacement in load_reading_replacements().items():
         text = text.replace(source, replacement)
     return text
 
