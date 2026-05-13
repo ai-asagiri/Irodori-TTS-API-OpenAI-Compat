@@ -33,7 +33,7 @@ from tts_runtime_pool import TTSWorkerPool
 
 BASE_DIR = Path(__file__).resolve().parent
 REF_DIR = BASE_DIR / "refs"
-READING_REPLACEMENTS_PATH = BASE_DIR / "reading_replacements.json"
+READING_REPLACEMENTS_PATH = CONFIG.reading_replacements_path
 
 CODEC_REPO = "Aratako/Semantic-DACVAE-Japanese-32dim"
 DEFAULT_MODEL = CONFIG.default_model
