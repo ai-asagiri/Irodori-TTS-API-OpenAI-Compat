@@ -684,6 +684,13 @@ async def create_speech(req: SpeechRequest):
                 ),
                 log_fn=None,
             )
+            print(
+                f"[tts:{log_kind}] result "
+                f"id={request_id} "
+                f"index={index}/{len(chunks)} "
+                f"used_seed={getattr(result, 'used_seed', None)}",
+                flush=True,
+            )
 
             if sample_rate is None:
                 sample_rate = int(result.sample_rate)
