@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 import sys
 import time
 import uuid
@@ -583,6 +584,7 @@ async def create_speech(req: SpeechRequest):
     if not chunks:
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
 
+    effective_seed = common.seed if common.seed is not None else secrets.randbits(63)
     no_ref = ref_path is None
 
     if req.speed is not None and req.speed != 1.0:
@@ -617,6 +619,7 @@ async def create_speech(req: SpeechRequest):
         f"cfg_scale_speaker={cfg_scale_speaker} "
         f"cfg_guidance_mode={common.cfg_guidance_mode} "
         f"seed={common.seed} "
+        f"effective_seed={effective_seed} "
         f"num_steps={common.num_steps}"
     )
     print(
@@ -676,7 +679,7 @@ async def create_speech(req: SpeechRequest):
                     speaker_kv_scale=None,
                     speaker_kv_min_t=None,
                     speaker_kv_max_layers=None,
-                    seed=common.seed,
+                    seed=effective_seed,
                     trim_tail=bool(common.trim_tail),
                     tail_window_size=int(common.tail_window_size),
                     tail_std_threshold=float(common.tail_std_threshold),
