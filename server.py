@@ -81,7 +81,7 @@ _runtime_key_cache_lock = Lock()
 class CommonParams(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    seed: int | None = 42
+    seed: int | None = None
     num_steps: int = 24
     cfg_scale_text: float = 2.0
     cfg_guidance_mode: str = "independent"
