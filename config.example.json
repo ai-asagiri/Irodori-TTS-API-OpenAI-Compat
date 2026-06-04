@@ -6,5 +6,6 @@
   "num_workers": 1,
   "audio_output_max_bytes": 2147483648,
   "default_model": "irodori-tts",
-  "default_voice": ""
+  "default_voice": "",
+  "reading_replacements_path": "reading_replacements.json"
 }

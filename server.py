@@ -64,13 +64,13 @@ class ModelSpec:
 
 MODEL_SPECS: dict[str, ModelSpec] = {
     "irodori-tts": ModelSpec(
-        repo_id="Aratako/Irodori-TTS-500M-v2",
+        repo_id="Aratako/Irodori-TTS-500M-v3",
         use_speaker_condition=True,
         use_caption_condition=False,
     ),
     "irodori-tts-voice-design": ModelSpec(
-        repo_id="Aratako/Irodori-TTS-500M-v2-VoiceDesign",
-        use_speaker_condition=False,
+        repo_id="Aratako/Irodori-TTS-600M-v3-VoiceDesign",
+        use_speaker_condition=True,
         use_caption_condition=True,
     ),
 }
@@ -86,8 +86,13 @@ class CommonParams(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     seed: int | None = None
-    num_steps: int = 24
-    cfg_scale_text: float = 2.0
+    num_steps: int = 40
+    cfg_scale_text: float = 3.0
+    duration_scale: float = 1.0
+    use_duration_prediction: bool = True
+    t_schedule_mode: str = "linear"
+    sway_coeff: float = -1.0
+    speaker_uncond_mode: str = "mask"
     cfg_guidance_mode: str = "independent"
     trim_tail: bool = True
     tail_window_size: int = 20
@@ -109,7 +114,7 @@ class VoiceDesignModelParams(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     caption: str | None = None
-    cfg_scale_caption: float = 1.0
+    cfg_scale_caption: float = 3.0
 
 
 class SpeechRequest(BaseModel):
@@ -204,7 +209,6 @@ def runtime_key_for(model_id: str) -> RuntimeKey:
             codec_precision="bf16",
             codec_deterministic_encode=True,
             codec_deterministic_decode=True,
-            enable_watermark=False,
             compile_model=False,
             compile_dynamic=False,
         )
@@ -723,17 +727,21 @@ async def create_speech(req: SpeechRequest):
         sample_rate: int | None = None
 
         for index, chunk in enumerate(chunks, start=1):
-            chunk_seconds = seconds_for_chunk(
-                chunk,
-                reading_replacements=reading_replacements,
-            )
+            chunk_seconds = None
+            if not common.use_duration_prediction:
+                chunk_seconds = seconds_for_chunk(
+                    chunk,
+                    reading_replacements=reading_replacements,
+                )
+            chunk_seconds_log = "auto" if chunk_seconds is None else f"{chunk_seconds:.2f}"
             chunk_start = time.perf_counter()
             print(
                 f"[tts:{log_kind}] chunk "
                 f"id={request_id} "
                 f"index={index}/{len(chunks)} "
                 f"chars={len(chunk)} "
-                f"seconds={chunk_seconds:.2f} "
+                f"seconds={chunk_seconds_log} "
+                f"use_duration_prediction={common.use_duration_prediction} "
                 f"repr={chunk!r}",
                 flush=True,
             )
@@ -743,12 +751,14 @@ async def create_speech(req: SpeechRequest):
                     caption=caption,
                     ref_wav=str(ref_path) if ref_path is not None else None,
                     ref_latent=None,
+                    ref_embed=None,
                     no_ref=no_ref,
                     ref_normalize_db=default_params.ref_normalize_db,
                     ref_ensure_max=bool(default_params.ref_ensure_max),
                     num_candidates=1,
                     decode_mode="sequential",
                     seconds=chunk_seconds,
+                    duration_scale=float(common.duration_scale),
                     max_ref_seconds=default_params.max_ref_seconds,
                     max_text_len=None,
                     max_caption_len=None,
@@ -767,11 +777,15 @@ async def create_speech(req: SpeechRequest):
                     speaker_kv_scale=None,
                     speaker_kv_min_t=None,
                     speaker_kv_max_layers=None,
+                    speaker_uncond_mode=common.speaker_uncond_mode,
                     seed=effective_seed,
+                    t_schedule_mode=common.t_schedule_mode,
+                    sway_coeff=float(common.sway_coeff),
                     trim_tail=bool(common.trim_tail),
                     tail_window_size=int(common.tail_window_size),
                     tail_std_threshold=float(common.tail_std_threshold),
                     tail_mean_threshold=float(common.tail_mean_threshold),
+                    lora_adapter=None,
                 ),
                 log_fn=None,
             )

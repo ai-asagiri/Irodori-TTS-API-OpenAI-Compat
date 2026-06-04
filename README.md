@@ -8,6 +8,8 @@ Irodori-TTS を OpenAI 互換形式の Text-to-Speech API として利用する�
 
 このリポジトリは resident API として Irodori-TTS の runtime を保持し、OpenAI 互換形式のリクエストを Irodori-TTS の推論呼び出しに変換します。
 
+既定モデルは Irodori-TTS v3 checkpoint の `Aratako/Irodori-TTS-500M-v3` です。VoiceDesign 用モデルは `Aratako/Irodori-TTS-600M-v3-VoiceDesign` を使用し、text / reference speech / caption text の 3 条件を扱います。
+
 ## 本家 Irodori-TTS との関係
 
 このリポジトリは [Aratako/Irodori-TTS](https://github.com/Aratako/Irodori-TTS) 本体ではなく、API ラッパーのみを管理します。
@@ -71,6 +73,7 @@ cp /path/to/reference.wav refs/example-voice.wav
 * `audio_output_max_bytes`: 出力ディレクトリの容量上限
 * `default_model`: 省略時のモデル ID
 * `default_voice`: 省略時の参照音声プリセット。空文字なら参照音声なし
+* `reading_replacements_path`: 読み補正辞書 JSON のパス
 
 ## 起動方法
 
@@ -182,6 +185,25 @@ curl -X POST "http://127.0.0.1:8000/v1/audio/speech" -H "Content-Type: applicati
 
 この例では、参照音声を `refs/example-voice.wav` に配置します。`voice` には、`refs/` 配下の wav ファイル名から拡張子を除いた名前を指定します。
 
+## Irodori-TTS v3 向けパラメータ
+
+この API では v3 の duration predictor を既定で使用します。`common.use_duration_prediction=true` の場合、Irodori-TTS runtime へ `seconds=null` を渡し、checkpoint 側の duration predictor に発話時間を推定させます。
+
+legacy の文字数ベース秒数推定を使う場合は、Additional Parameters などで `common.use_duration_prediction=false` を指定してください。その場合のみ、この API の既存 `seconds_for_chunk()` による秒数推定を runtime に渡します。
+
+例:
+
+```json
+{
+  "model": "irodori-tts",
+  "input": "今日は音声生成のテストです。",
+  "response_format": "wav",
+  "common": {
+    "use_duration_prediction": false
+  }
+}
+```
+
 ## `voice` の扱い
 
 `voice` は、この API で定義する参照音声プリセット名です。
@@ -193,6 +215,7 @@ curl -X POST "http://127.0.0.1:8000/v1/audio/speech" -H "Content-Type: applicati
 ## 制限事項
 
 * `response_format` は現状 `wav` のみ対応
+* `speed` は受け取りますが、現在は音声速度には反映されません
 
 ## OpenAI 互換クライアント向け補足
 
