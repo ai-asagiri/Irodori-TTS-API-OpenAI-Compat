@@ -64,13 +64,13 @@ class ModelSpec:
 
 MODEL_SPECS: dict[str, ModelSpec] = {
     "irodori-tts": ModelSpec(
-        repo_id="Aratako/Irodori-TTS-500M-v2",
+        repo_id="Aratako/Irodori-TTS-500M-v3",
         use_speaker_condition=True,
         use_caption_condition=False,
     ),
     "irodori-tts-voice-design": ModelSpec(
-        repo_id="Aratako/Irodori-TTS-500M-v2-VoiceDesign",
-        use_speaker_condition=False,
+        repo_id="Aratako/Irodori-TTS-600M-v3-VoiceDesign",
+        use_speaker_condition=True,
         use_caption_condition=True,
     ),
 }
@@ -86,9 +86,14 @@ class CommonParams(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     seed: int | None = None
-    num_steps: int = 24
-    cfg_scale_text: float = 2.0
+    num_steps: int = 40
+    cfg_scale_text: float = 3.0
     cfg_guidance_mode: str = "independent"
+    duration_scale: float = 1.0
+    use_duration_prediction: bool = True
+    t_schedule_mode: str = "linear"
+    sway_coeff: float = -1.0
+    speaker_uncond_mode: str = "mask"
     trim_tail: bool = True
     tail_window_size: int = 20
     tail_std_threshold: float = 0.05
@@ -109,7 +114,7 @@ class VoiceDesignModelParams(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     caption: str | None = None
-    cfg_scale_caption: float = 1.0
+    cfg_scale_caption: float = 3.0
 
 
 class SpeechRequest(BaseModel):
@@ -204,7 +209,6 @@ def runtime_key_for(model_id: str) -> RuntimeKey:
             codec_precision="bf16",
             codec_deterministic_encode=True,
             codec_deterministic_decode=True,
-            enable_watermark=False,
             compile_model=False,
             compile_dynamic=False,
         )
@@ -647,6 +651,9 @@ async def create_speech(req: SpeechRequest):
     else:
         voice_name = voice_name or "ignored"
 
+    no_ref = ref_path is None
+    use_speaker_for_request = bool(use_speaker_condition and not no_ref)
+
     cfg_scale_text, cfg_scale_caption, cfg_scale_speaker, _ = resolve_cfg_scales(
         cfg_guidance_mode=common.cfg_guidance_mode,
         cfg_scale_text=float(common.cfg_scale_text),
@@ -654,7 +661,7 @@ async def create_speech(req: SpeechRequest):
         cfg_scale_speaker=float(default_params.cfg_scale_speaker),
         cfg_scale=None,
         use_caption_condition=use_caption_condition,
-        use_speaker_condition=use_speaker_condition,
+        use_speaker_condition=use_speaker_for_request,
     )
 
     reading_replacements = None
@@ -669,7 +676,6 @@ async def create_speech(req: SpeechRequest):
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
 
     effective_seed = common.seed if common.seed is not None else secrets.randbits(63)
-    no_ref = ref_path is None
 
     if req.speed is not None and req.speed != 1.0:
         print(
@@ -691,9 +697,10 @@ async def create_speech(req: SpeechRequest):
         f"id={request_id} "
         f"model={model_id} voice={voice_name} ref_path={ref_path} "
         f"no_ref={no_ref} "
-        f"use_speaker_condition={use_speaker_condition} "
+        f"use_speaker_for_request={use_speaker_for_request} "
         f"use_caption_condition={use_caption_condition} "
         f"use_reading_corrections={common.use_reading_corrections} "
+        f"use_duration_prediction={common.use_duration_prediction} "
         f"caption={caption!r}"
     )
     print(
@@ -705,7 +712,10 @@ async def create_speech(req: SpeechRequest):
         f"cfg_guidance_mode={common.cfg_guidance_mode} "
         f"seed={common.seed} "
         f"effective_seed={effective_seed} "
-        f"num_steps={common.num_steps}"
+        f"num_steps={common.num_steps} "
+        f"t_schedule_mode={common.t_schedule_mode} "
+        f"sway_coeff={common.sway_coeff} "
+        f"speaker_uncond_mode={common.speaker_uncond_mode}"
     )
     print(
         f"[tts:{log_kind}] split "
@@ -723,17 +733,21 @@ async def create_speech(req: SpeechRequest):
         sample_rate: int | None = None
 
         for index, chunk in enumerate(chunks, start=1):
-            chunk_seconds = seconds_for_chunk(
-                chunk,
-                reading_replacements=reading_replacements,
-            )
+            chunk_seconds = None
+            if not common.use_duration_prediction:
+                chunk_seconds = seconds_for_chunk(
+                    chunk,
+                    reading_replacements=reading_replacements,
+                )
+            chunk_seconds_log = "auto" if chunk_seconds is None else f"{chunk_seconds:.2f}"
             chunk_start = time.perf_counter()
             print(
                 f"[tts:{log_kind}] chunk "
                 f"id={request_id} "
                 f"index={index}/{len(chunks)} "
                 f"chars={len(chunk)} "
-                f"seconds={chunk_seconds:.2f} "
+                f"seconds={chunk_seconds_log} "
+                f"duration_scale={common.duration_scale} "
                 f"repr={chunk!r}",
                 flush=True,
             )
@@ -743,12 +757,14 @@ async def create_speech(req: SpeechRequest):
                     caption=caption,
                     ref_wav=str(ref_path) if ref_path is not None else None,
                     ref_latent=None,
+                    ref_embed=None,
                     no_ref=no_ref,
                     ref_normalize_db=default_params.ref_normalize_db,
                     ref_ensure_max=bool(default_params.ref_ensure_max),
                     num_candidates=1,
                     decode_mode="sequential",
                     seconds=chunk_seconds,
+                    duration_scale=float(common.duration_scale),
                     max_ref_seconds=default_params.max_ref_seconds,
                     max_text_len=None,
                     max_caption_len=None,
@@ -767,11 +783,15 @@ async def create_speech(req: SpeechRequest):
                     speaker_kv_scale=None,
                     speaker_kv_min_t=None,
                     speaker_kv_max_layers=None,
+                    speaker_uncond_mode=common.speaker_uncond_mode,
                     seed=effective_seed,
+                    t_schedule_mode=common.t_schedule_mode,
+                    sway_coeff=float(common.sway_coeff),
                     trim_tail=bool(common.trim_tail),
                     tail_window_size=int(common.tail_window_size),
                     tail_std_threshold=float(common.tail_std_threshold),
                     tail_mean_threshold=float(common.tail_mean_threshold),
+                    lora_adapter=None,
                 ),
                 log_fn=None,
             )
