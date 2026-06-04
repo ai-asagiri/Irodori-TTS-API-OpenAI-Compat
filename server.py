@@ -651,6 +651,9 @@ async def create_speech(req: SpeechRequest):
     else:
         voice_name = voice_name or "ignored"
 
+    no_ref = ref_path is None
+    use_speaker_for_request = bool(use_speaker_condition and not no_ref)
+
     cfg_scale_text, cfg_scale_caption, cfg_scale_speaker, _ = resolve_cfg_scales(
         cfg_guidance_mode=common.cfg_guidance_mode,
         cfg_scale_text=float(common.cfg_scale_text),
@@ -658,7 +661,7 @@ async def create_speech(req: SpeechRequest):
         cfg_scale_speaker=float(default_params.cfg_scale_speaker),
         cfg_scale=None,
         use_caption_condition=use_caption_condition,
-        use_speaker_condition=use_speaker_condition,
+        use_speaker_condition=use_speaker_for_request,
     )
 
     reading_replacements = None
@@ -673,7 +676,6 @@ async def create_speech(req: SpeechRequest):
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
 
     effective_seed = common.seed if common.seed is not None else secrets.randbits(63)
-    no_ref = ref_path is None
 
     if req.speed is not None and req.speed != 1.0:
         print(
@@ -695,7 +697,7 @@ async def create_speech(req: SpeechRequest):
         f"id={request_id} "
         f"model={model_id} voice={voice_name} ref_path={ref_path} "
         f"no_ref={no_ref} "
-        f"use_speaker_condition={use_speaker_condition} "
+        f"use_speaker_for_request={use_speaker_for_request} "
         f"use_caption_condition={use_caption_condition} "
         f"use_reading_corrections={common.use_reading_corrections} "
         f"use_duration_prediction={common.use_duration_prediction} "
