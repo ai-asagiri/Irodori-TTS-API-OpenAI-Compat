@@ -71,6 +71,18 @@ cp /path/to/reference.wav refs/example-voice.wav
 * `audio_output_max_bytes`: 出力ディレクトリの容量上限
 * `default_model`: 省略時のモデル ID
 * `default_voice`: 省略時の参照音声プリセット。空文字なら参照音声なし
+* `reading_replacements_path`: 読み補正 JSON のパス
+
+## モデルと v3 runtime
+
+この API ラッパーは Irodori-TTS v3 runtime / v3 checkpoint を既定として扱います。
+
+* `irodori-tts`: 既定の通常モデル。Hugging Face checkpoint は `Aratako/Irodori-TTS-500M-v3` です。
+* `irodori-tts-voice-design`: VoiceDesign モデル。Hugging Face checkpoint は `Aratako/Irodori-TTS-600M-v3-VoiceDesign` です。text / reference speech / caption text の 3 条件を使うため、`voice` による `refs/*.wav` 参照音声と `irodori-tts-voice-design.caption` を指定してください。
+
+v3 では、リクエストの `common.use_duration_prediction` が既定で `true` です。この場合、各 chunk の `seconds` は runtime に `null` として渡され、v3 側の duration predictor が出力長を推定します。推定長は `common.duration_scale` でスケールできます。
+
+従来の簡易秒数推定を使いたい場合は、Additional Parameters で `common.use_duration_prediction=false` を指定してください。その場合のみ、この API ラッパーが chunk ごとに秒数を計算して `SamplingRequest.seconds` に渡します。
 
 ## 起動方法
 
@@ -193,6 +205,7 @@ curl -X POST "http://127.0.0.1:8000/v1/audio/speech" -H "Content-Type: applicati
 ## 制限事項
 
 * `response_format` は現状 `wav` のみ対応
+* `speed` は受け取りますが、引き続き音声速度には反映されません。
 
 ## OpenAI 互換クライアント向け補足
 
