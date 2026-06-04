@@ -202,7 +202,7 @@ OpenWebUI などが送信する `speed` は受け取りますが、現在は音�
 
 This repository is an API wrapper for Irodori-TTS.
 
-License: TBD
+License: MIT
 
 Irodori-TTS is developed by Aratako and is licensed under the MIT License.
 
