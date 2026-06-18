@@ -84,6 +84,22 @@ v3 では、リクエストの `common.use_duration_prediction` が既定で `tr
 
 従来の簡易秒数推定を使いたい場合は、Additional Parameters で `common.use_duration_prediction=false` を指定してください。その場合のみ、この API ラッパーが chunk ごとに秒数を計算して `SamplingRequest.seconds` に渡します。
 
+OpenWebUI の Additional Parameters から API 側の文章分割を無効化する場合は、次のように指定します。
+
+```json
+{
+  "common": {
+    "chunking_enabled": false,
+    "use_duration_prediction": true,
+    "use_reading_corrections": true
+  }
+}
+```
+
+`common.chunking_enabled` の既定値は `true` で、従来どおり文章を chunk に分割します。`false` の場合は入力全文を 1 chunk として推論に渡します。読み補正は `common.use_reading_corrections` の設定に従って全文に適用されます。
+
+長文を 1 回の推論に渡す場合は、モデル側の最大 text 長、VRAM 使用量、品質劣化、語尾欠けのリスクに注意してください。
+
 ## 起動方法
 
 この API ラッパーは専用の `.venv` を持たず、Irodori-TTS 本家リポジトリの `.venv` にある Python で起動します。
