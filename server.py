@@ -91,6 +91,7 @@ class CommonParams(BaseModel):
     cfg_guidance_mode: str = "independent"
     duration_scale: float = 1.0
     use_duration_prediction: bool = True
+    chunking_enabled: bool = True
     t_schedule_mode: str = "linear"
     sway_coeff: float = -1.0
     speaker_uncond_mode: str = "mask"
@@ -668,10 +669,17 @@ async def create_speech(req: SpeechRequest):
     if common.use_reading_corrections:
         reading_replacements = load_reading_replacements()
 
-    chunks = split_text_for_tts(
-        text,
-        reading_replacements=reading_replacements,
-    )
+    if common.chunking_enabled:
+        chunks = split_text_for_tts(
+            text,
+            reading_replacements=reading_replacements,
+        )
+    else:
+        whole_text = apply_reading_replacements(
+            text,
+            reading_replacements=reading_replacements,
+        ).strip()
+        chunks = [whole_text] if whole_text else []
     if not chunks:
         raise HTTPException(status_code=400, detail="input is empty after chunk split")
 
@@ -700,6 +708,7 @@ async def create_speech(req: SpeechRequest):
         f"use_speaker_for_request={use_speaker_for_request} "
         f"use_caption_condition={use_caption_condition} "
         f"use_reading_corrections={common.use_reading_corrections} "
+        f"chunking_enabled={common.chunking_enabled} "
         f"use_duration_prediction={common.use_duration_prediction} "
         f"caption={caption!r}"
     )
